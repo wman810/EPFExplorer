@@ -394,6 +394,8 @@ namespace EPFExplorer
 
             number_of_filenames_successfully_applied = 0;
 
+            archivedfiles.Clear();
+
             filecount = form1.readU32FromArray(filebytes, 0);
 
             Console.WriteLine(filecount);
@@ -414,6 +416,12 @@ namespace EPFExplorer
                 }
             }
 
+            if (archivedfiles.Count == 0)
+            {
+                Console.WriteLine("Arc has zero files.");
+                return;
+            }
+
             int endOfOriginalFileData = archivedfiles[archivedfiles.Count - 1].offset + archivedfiles[archivedfiles.Count - 1].size;
 
             while (endOfOriginalFileData % 0x04 != 0)
@@ -423,54 +431,69 @@ namespace EPFExplorer
 
             endOfOriginalFileData += 4; //skip checksum
 
-            byte[] customFilenameTable = null;
+            bool customFilenameTableApplied = false;
 
             if (filebytes.Length > endOfOriginalFileData)  //if there's more after the end of the checksum, it's a custom names section added by this program on a previous export, we can use this to obtain the file names
             {
-                Console.WriteLine("Custom filename table activated");
-
-                use_custom_filename_table = true;
-
-                customFilenameTable = new byte[filebytes.Length - endOfOriginalFileData];
-
+                byte[] customFilenameTable = new byte[filebytes.Length - endOfOriginalFileData];
                 Array.Copy(filebytes, endOfOriginalFileData, customFilenameTable, 0, filebytes.Length - endOfOriginalFileData);
 
-                customFilenameTable = DSDecmp.NewestProgram.Decompress(customFilenameTable, new DSDecmp.Formats.Nitro.LZ11());
-
-                List<string> customFilenames = new List<string>();
-
-                string newstring = "";
-
-                if (customFilenameTable != null)
+                // Some arc variants have footer data after checksum that is not our filename table.
+                // Only treat trailing data as custom names if it looks like valid LZ11 and has enough names.
+                if (customFilenameTable.Length > 0 && customFilenameTable[0] == 0x11)
                 {
-                    for (int i = 0; i < customFilenameTable.Length; i++)    //go through the byte array and parse all the strings
-                    {
-                        char newchar = (char)customFilenameTable[i];
+                    customFilenameTable = DSDecmp.NewestProgram.Decompress(customFilenameTable, new DSDecmp.Formats.Nitro.LZ11());
 
-                        if ((byte)newchar == 0x00)
+                    List<string> customFilenames = new List<string>();
+
+                    string newstring = "";
+
+                    if (customFilenameTable != null)
+                    {
+                        for (int i = 0; i < customFilenameTable.Length; i++)    //go through the byte array and parse all the strings
                         {
-                            customFilenames.Add(newstring);
-                            newstring = "";
+                            char newchar = (char)customFilenameTable[i];
+
+                            if ((byte)newchar == 0x00)
+                            {
+                                customFilenames.Add(newstring);
+                                newstring = "";
+                            }
+                            else if (newchar == '?' && newstring.Length == 0)
+                            {
+                                customFilenames.Add("FILENAME_NOT_SET");
+                                newstring = "";
+                            }
+                            else
+                            {
+                                newstring += newchar;
+                            }
                         }
-                        else if (newchar == '?' && newstring.Length == 0)
+
+                        if (customFilenames.Count >= archivedfiles.Count)
                         {
-                            customFilenames.Add("FILENAME_NOT_SET");
-                            newstring = "";
+                            Console.WriteLine("Custom filename table activated");
+                            use_custom_filename_table = true;
+                            customFilenameTableApplied = true;
+
+                            for (int i = 0; i < archivedfiles.Count; i++)   //then apply the filenames from the table to the archivedfiles
+                            {
+                                archivedfiles[i].filename = customFilenames[i];
+                            }
                         }
                         else
                         {
-                            newstring += newchar;
+                            Console.WriteLine("Ignored trailing LZ11 data: custom filename table entry count was smaller than filecount.");
                         }
                     }
-
-                    for (int i = 0; i < archivedfiles.Count; i++)   //then apply the filenames from the table to the archivedfiles
-                    {
-                        archivedfiles[i].filename = customFilenames[i];
-                    }
+                }
+                else
+                {
+                    Console.WriteLine("Ignored trailing data after checksum (not a custom filename table).");
                 }
             }
 
-            if (customFilenameTable == null)//otherwise, try to match hashes with the filenames obtained from ARM9
+            if (!customFilenameTableApplied)//otherwise, try to match hashes with the filenames obtained from ARM9
             {
                 foreach (string s in form1.stringsEPF)   //go through the potential filenames in the string array and label the files in the arc as best we can
                 {
