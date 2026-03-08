@@ -208,7 +208,14 @@ namespace EPFExplorer
                             }
                             else if (mask == 0x01 && effect == 0x04)
                             {
-                                output.Add((byte)((bin.filebytes[bin.offsetOfMusicInstructionData + pos] & 0xF0) | ((bin.filebytes[bin.offsetOfMusicInstructionData + pos] & 0x0F) >> 1)));
+                                byte v = bin.filebytes[bin.offsetOfMusicInstructionData + pos];
+                                byte speed = (byte)((v >> 4) & 0x0F);
+                                byte depth = (byte)(v & 0x0F);
+
+                                byte newSpeed = (byte)Math.Min(0x0F, speed * 1.5);
+                                byte newDepth = (byte)((depth + 1) / 2);
+
+                                output.Add((byte)((newSpeed << 4) | newDepth));
                             }
                             else
                             {
